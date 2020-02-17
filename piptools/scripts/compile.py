@@ -12,6 +12,7 @@ from .._compat import install_req_from_line, parse_requirements
 from ..cache import DependencyCache
 from ..exceptions import PipToolsError
 from ..locations import CACHE_DIR
+from ..lock import read_locks
 from ..logging import log
 from ..repositories import LocalRequirementsRepository, PyPIRepository
 from ..resolver import Resolver
@@ -182,6 +183,12 @@ pip_defaults = install_command.parser.get_default_values()
     show_envvar=True,
     type=click.Path(file_okay=False, writable=True),
 )
+@click.option(
+    "--lock",
+    help="Add input file locks to generated file. "
+    is_flag=True,
+    default=False,
+)
 def cli(
     ctx,
     verbose,
@@ -209,6 +216,7 @@ def cli(
     build_isolation,
     emit_find_links,
     cache_dir,
+    lock,
 ):
     """Compiles requirements.txt from requirements.in specs."""
     log.verbosity = verbose - quiet
@@ -225,6 +233,9 @@ def cli(
                     "the default is {} or setup.py"
                 ).format(DEFAULT_REQUIREMENTS_FILE)
             )
+
+    if lock and src_files == ("-",):
+        raise click.BadParameter("--lock does not support input from stdin")
 
     if not output_file:
         # An output file must be provided for stdin
@@ -247,6 +258,21 @@ def cli(
 
         # Close the file at the end of the context execution
         ctx.call_on_close(safecall(output_file.close_intelligently))
+
+    ###
+    # Check existing lock
+    ###
+    try:
+        existing_locks = read_locks(output_file.name)
+    except ValueError:
+        existing_locks = None
+    else:
+        if not existing_locks:
+            log.debug(
+                "existing output file {} has no locks, they will be added".format(
+                    output_file.name
+                )
+            )
 
     ###
     # Setup
@@ -440,6 +466,7 @@ def cli(
         allow_unsafe=allow_unsafe,
         find_links=repository.finder.find_links,
         emit_find_links=emit_find_links,
+        emit_lock=(lock or existing_locks),
     )
     writer.write(
         results=results,
